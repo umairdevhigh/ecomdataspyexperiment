@@ -48,9 +48,9 @@ if 'all_urls' not in st.session_state:
 # ============================================================
 # PAGE CONFIG
 # ============================================================
-st.set_page_config(page_title="Universal E-commerce Extractor V5.3", page_icon="🛒")
-st.title("🛒 UNIVERSAL E-COMMERCE EXTRACTOR V5.3 (FIXED)")
-st.markdown("**Long Description Fixed | Smart Title Improved | Gemini 3.6 Flash**")
+st.set_page_config(page_title="Universal E-commerce Extractor V5.4", page_icon="🛒")
+st.title("🛒 UNIVERSAL E-COMMERCE EXTRACTOR V5.4 (VARIABLE PRODUCTS FIX)")
+st.markdown("**Now handles Size + Color variations | Shopify/WooCommerce ready**")
 
 st.components.v1.html("""
 <script>
@@ -109,25 +109,21 @@ with st.expander("⚙️ Configure Product Content", expanded=True):
                       height=80)
         
         st.checkbox("✨ Auto-Generate Unique Product Title (from specs + material + color)", 
-                    key="smart_title_enabled", value=True,
-                    help="If ON, tool will create titles like 'Waxed Sheepskin Biker Jacket - Black' using specs. If OFF, original title is used.")
+                    key="smart_title_enabled", value=True)
     
     with col_ct2:
         st.slider("🖼️ Max Gallery Images per Product", 3, 20, 10, key="max_gallery_images")
     
     st.markdown("---")
-    st.checkbox("🚀 AI-Powered Descriptions (Google Gemini — Free Tier)", key="ai_enabled", value=False,
-                help="Uses Gemini to write unique descriptions. Falls back to local rewriter if fails.")
+    st.checkbox("🚀 AI-Powered Descriptions (Google Gemini — Free Tier)", key="ai_enabled", value=False)
     
     if st.session_state.get("ai_enabled", False):
         col_key1, col_key2 = st.columns([2, 1])
         with col_key1:
-            st.text_input("🔑 Gemini API Key", type="password", key="gemini_api_key",
-                          help="Get your free key from https://aistudio.google.com/apikey")
+            st.text_input("🔑 Gemini API Key", type="password", key="gemini_api_key")
         with col_key2:
-            st.selectbox("Model", ["gemini-3.6-flash", "gemini-1.5-flash", "gemini-1.5-pro"], key="gemini_model",
-                         help="3.6 Flash = latest, fastest, most cost-effective.")
-        st.caption("⚠️ Free tier has rate limits. Tool will auto-fallback to local rewriter if AI fails.")
+            st.selectbox("Model", ["gemini-3.6-flash", "gemini-1.5-flash", "gemini-1.5-pro"], key="gemini_model")
+        st.caption("⚠️ Free tier has rate limits. Auto-fallback to local rewriter if AI fails.")
     else:
         if 'gemini_api_key' in st.session_state:
             st.session_state.gemini_api_key = ""
@@ -198,7 +194,7 @@ def get_branding_config():
     }
 
 # ============================================================
-# SMART REWRITER (FIXED: ALWAYS RETURNS NON-EMPTY DESCRIPTION)
+# SMART REWRITER + CONTENT GENERATOR
 # ============================================================
 class SmartRewriter:
     def __init__(self):
@@ -333,9 +329,7 @@ class SmartRewriter:
                 items = [f"{k.strip()}: {v.strip()}" for k, v in matches]
         return items[:8]
 
-    # 🔥 FIX: Generates description that is never empty
     def generate_seo_content(self, title, raw_desc, category=None, store_context=None, specs_text=None):
-        # Safe hook
         hook_template, hook_benefit = self._get_unique(self.hook_pool, self.used_hooks)
         try:
             hook = hook_template.format(title=title)
@@ -349,7 +343,6 @@ class SmartRewriter:
         niche_line = f" Perfect for shoppers who care about {store_context.strip().rstrip('.')}." if store_context else ""
         intro = f"{hook}{benefit}.{niche_line}"
         
-        # Features
         spec_items = self._format_specs_as_bullets(specs_text or raw_desc, title)
         num_features = random.randint(3, 5)
         features = []
@@ -363,30 +356,25 @@ class SmartRewriter:
         
         cta = self._get_unique(self.cta_pool, self.used_ctas)
         
-        # Build description with at least intro + cta
         parts = [f"<p>{intro}</p>"]
         if feature_html:
             parts.append(f"<ul>{feature_html}</ul>")
         parts.append(f"<p>{cta}</p>")
         description_html = ''.join(parts)
         
-        # Ensure non-empty
         if not description_html or len(description_html.strip()) < 10:
             description_html = f"<p>Discover the {title}. Crafted with premium materials for lasting quality and style. Shop now.</p>"
         
-        # SEO title
         seo_hook = self._get_unique(self.seo_hooks, self.used_seo)
         seo_title = f"{title} — {seo_hook.format(title=title)}"
         if len(seo_title) > 60:
             seo_title = seo_title[:57] + '...'
         
-        # SEO description
         plain_intro = re.sub(r'<[^<]+?>', ' ', intro)[:120]
         seo_description = f"{plain_intro} Discover the {title} collection today."
         if len(seo_description) > 160:
             seo_description = seo_description[:157] + '...'
         
-        # Short description
         short_desc = plain_intro[:100]
         if len(short_desc) > 100:
             short_desc = short_desc[:97] + '...'
@@ -489,7 +477,6 @@ def parse_ai_response(text, fallback_title):
         if current_section in sections:
             result[sections[current_section]] = clean_content
     
-    # Ensure description is non-empty
     if not result['description_html'] or len(result['description_html'].strip()) < 10:
         result['description_html'] = f"<p>Discover the {fallback_title}. Crafted with premium materials for lasting quality and style. Shop now.</p>"
     if not result['short_description']:
@@ -499,7 +486,6 @@ def parse_ai_response(text, fallback_title):
     if not result['seo_description']:
         result['seo_description'] = f"Discover the {fallback_title} collection today."
     
-    # Truncate if too long
     if len(result['seo_title']) > 70:
         result['seo_title'] = result['seo_title'][:67] + '...'
     if len(result['seo_description']) > 165:
@@ -510,7 +496,7 @@ def parse_ai_response(text, fallback_title):
     return result
 
 # ============================================================
-# EXTRACTORS (unchanged)
+# EXTRACTORS
 # ============================================================
 def safe_get_offer_price(offers):
     if isinstance(offers, dict): return offers.get('price', '')
@@ -717,15 +703,13 @@ def extract_vendor(soup, product_data, default="Imported Vendor"):
     return default
 
 # ============================================================
-# SMART TITLE GENERATOR (IMPROVED: More Natural)
+# SMART TITLE GENERATOR
 # ============================================================
 def generate_smart_title(original_title, specs_text, color=None, material=None):
     if not specs_text or not original_title:
         return original_title
     
     specs_lower = specs_text.lower()
-    
-    # Detect material (only if not already in title)
     materials = ['leather', 'sheepskin', 'goatskin', 'cowhide', 'suede', 'nubuck', 
                  'canvas', 'denim', 'wool', 'polyester', 'nylon', 'cotton', 'hemp']
     detected_material = ''
@@ -734,7 +718,6 @@ def generate_smart_title(original_title, specs_text, color=None, material=None):
             detected_material = mat.capitalize()
             break
     
-    # Detect finish
     finish_types = ['waxed', 'pull-up', 'semi-aniline', 'aniline', 'distressed', 
                     'vintage', 'washed', 'oiled', 'matte', 'glossy']
     detected_finish = ''
@@ -743,7 +726,6 @@ def generate_smart_title(original_title, specs_text, color=None, material=None):
             detected_finish = fin.capitalize()
             break
     
-    # Detect color (only if not in title)
     colors = ['black', 'brown', 'tan', 'maroon', 'red', 'blue', 'green', 'grey', 
               'white', 'charcoal', 'navy', 'olive', 'camel', 'chestnut', 'mahogany']
     detected_color = ''
@@ -752,15 +734,7 @@ def generate_smart_title(original_title, specs_text, color=None, material=None):
             detected_color = col.capitalize()
             break
     
-    # Build clean core title (remove extra words like "jacket" if already present)
     core = original_title
-    # Remove common filler words to avoid duplication
-    for word in ['jacket', 'coat', 'outerwear', 'garment']:
-        if word in core.lower():
-            # Keep only one instance
-            pass
-    
-    # Build new title parts (only if detected)
     parts = []
     if detected_finish:
         parts.append(detected_finish)
@@ -771,17 +745,15 @@ def generate_smart_title(original_title, specs_text, color=None, material=None):
         parts.append(detected_color)
     
     new_title = ' - '.join(parts)
-    # Clean up extra spaces/hyphens
     new_title = re.sub(r'\s+', ' ', new_title).strip()
     new_title = re.sub(r'-\s*-\s*', '-', new_title)
     
-    # If title is too long or not improved, keep original
     if len(new_title) > 80 or len(new_title) < len(original_title) - 5:
         return original_title
     return new_title
 
 # ============================================================
-# GALLERY IMAGE HELPERS (unchanged)
+# GALLERY IMAGE HELPERS
 # ============================================================
 def strip_size_suffix(url):
     try:
@@ -932,7 +904,7 @@ def collect_gallery_images(url, soup, base_url_domain, session, headers, product
     return final
 
 # ============================================================
-# IMAGE EDITOR (unchanged)
+# IMAGE EDITOR
 # ============================================================
 def edit_image(img_data, filename, config):
     try:
@@ -1072,8 +1044,128 @@ def edit_image(img_data, filename, config):
             return None, None
 
 # ============================================================
-# MAIN SCRAPER (FIXED: ALWAYS POPULATES DESCRIPTION)
+# 🔥 FIXED: VARIABLE PRODUCTS EXTRACTION
 # ============================================================
+def extract_variations_from_jsonld(product_data, soup, base_url_domain, price):
+    """Extract variations from multiple JSON-LD contexts"""
+    variations = []
+    seen_attrs = set()
+    
+    # Method 1: Check if offers is a list
+    offers = product_data.get('offers')
+    if isinstance(offers, list) and len(offers) > 1:
+        for offer in offers:
+            if not isinstance(offer, dict):
+                continue
+            var_sku = offer.get('sku', '')
+            var_price = offer.get('price', price)
+            var_attrs = {}
+            
+            # Extract attributes
+            if 'size' in offer:
+                var_attrs['Size'] = offer['size']
+            if 'color' in offer:
+                var_attrs['Color'] = offer['color']
+            if 'material' in offer:
+                var_attrs['Material'] = offer['material']
+            
+            # If no attrs found, try from offer properties
+            if not var_attrs:
+                for key in ['size', 'color', 'material', 'style']:
+                    if key in offer:
+                        var_attrs[key.capitalize()] = offer[key]
+            
+            # If still no attrs, create generic
+            if not var_attrs:
+                var_attrs['Option'] = f'Variant {len(variations)+1}'
+            
+            # Avoid duplicates
+            attrs_key = tuple(sorted(var_attrs.items()))
+            if attrs_key not in seen_attrs:
+                seen_attrs.add(attrs_key)
+                variations.append({
+                    'sku': var_sku,
+                    'price': var_price,
+                    'attrs': var_attrs,
+                    'image': offer.get('image', '')
+                })
+    
+    # Method 2: Check @graph for Product + Offer
+    if isinstance(product_data, dict) and '@graph' in product_data:
+        graph = product_data['@graph']
+        if isinstance(graph, list):
+            product_offers = []
+            for item in graph:
+                if isinstance(item, dict):
+                    if item.get('@type') == 'Product' and 'offers' in item:
+                        offers2 = item.get('offers')
+                        if isinstance(offers2, list):
+                            product_offers.extend(offers2)
+                    elif item.get('@type') == 'Offer':
+                        product_offers.append(item)
+            
+            if product_offers:
+                for offer in product_offers:
+                    if not isinstance(offer, dict):
+                        continue
+                    var_sku = offer.get('sku', '')
+                    var_price = offer.get('price', price)
+                    var_attrs = {}
+                    if 'size' in offer:
+                        var_attrs['Size'] = offer['size']
+                    if 'color' in offer:
+                        var_attrs['Color'] = offer['color']
+                    if not var_attrs:
+                        # Try to extract from product context
+                        for item in graph:
+                            if isinstance(item, dict) and item.get('@type') == 'Product':
+                                if 'size' in item:
+                                    var_attrs['Size'] = item['size']
+                                if 'color' in item:
+                                    var_attrs['Color'] = item['color']
+                                break
+                    if not var_attrs:
+                        var_attrs['Option'] = f'Variant {len(variations)+1}'
+                    
+                    attrs_key = tuple(sorted(var_attrs.items()))
+                    if attrs_key not in seen_attrs:
+                        seen_attrs.add(attrs_key)
+                        variations.append({
+                            'sku': var_sku,
+                            'price': var_price,
+                            'attrs': var_attrs,
+                            'image': offer.get('image', '')
+                        })
+    
+    # Method 3: Check for hasVariant property
+    if 'hasVariant' in product_data:
+        variants = product_data['hasVariant']
+        if isinstance(variants, list):
+            for var in variants:
+                if not isinstance(var, dict):
+                    continue
+                var_sku = var.get('sku', '')
+                var_price = var.get('price', price)
+                var_attrs = {}
+                if 'size' in var:
+                    var_attrs['Size'] = var['size']
+                if 'color' in var:
+                    var_attrs['Color'] = var['color']
+                if not var_attrs:
+                    var_attrs['Option'] = f'Variant {len(variations)+1}'
+                
+                attrs_key = tuple(sorted(var_attrs.items()))
+                if attrs_key not in seen_attrs:
+                    seen_attrs.add(attrs_key)
+                    variations.append({
+                        'sku': var_sku,
+                        'price': var_price,
+                        'attrs': var_attrs,
+                        'image': var.get('image', '')
+                    })
+    
+    return variations
+
 def scrape_product(url, session, config):
     headers = {'User-Agent': random.choice(USER_AGENTS)}
     for attempt in range(2):
@@ -1096,30 +1188,43 @@ def scrape_product(url, session, config):
             return 'Product' in data_type
         return False
 
+    # Parse JSON-LD
     for script in soup.find_all('script', type='application/ld+json'):
         try:
             data = json.loads(script.string)
         except Exception:
             continue
-        if isinstance(data, dict) and is_product_type(data.get('@type')):
-            product_data = data
-            break
-        graph = data.get('@graph') if isinstance(data, dict) else None
-        if isinstance(graph, list):
-            for entry in graph:
-                if isinstance(entry, dict) and is_product_type(entry.get('@type')):
-                    product_data = entry
+        
+        # Handle different JSON structures
+        if isinstance(data, dict):
+            if is_product_type(data.get('@type')):
+                product_data = data
+                break
+            if '@graph' in data:
+                for entry in data['@graph']:
+                    if isinstance(entry, dict) and is_product_type(entry.get('@type')):
+                        product_data = data
+                        break
+                if product_data:
                     break
-        if product_data:
-            break
+        
         if isinstance(data, list):
             for entry in data:
                 if isinstance(entry, dict) and is_product_type(entry.get('@type')):
                     product_data = entry
                     break
-        if product_data:
-            break
+            if product_data:
+                break
+    
+    # Fallback: if no JSON-LD, try to find Open Graph product data
+    if not product_data:
+        og_title = soup.find('meta', property='og:title')
+        if og_title and og_title.get('content'):
+            product_data = {'name': og_title.get('content')}
+        else:
+            product_data = {}
 
+    # Extract basic data
     original_title = extract_title(soup, product_data, url)
     raw_desc = extract_raw_description(soup, product_data) or original_title
     category_str = format_category(soup, product_data, original_title)
@@ -1171,7 +1276,6 @@ def scrape_product(url, session, config):
         gen_seo_description = ai_content.get('seo_description', f"Shop {title} today.")
         gen_short_desc = ai_content.get('short_description', f"Discover the {title}.")
     else:
-        # Fallback to local rewriter
         local_content = rewriter.generate_seo_content(title, raw_desc, category_str, config.get('store_context', ''), specs_text)
         seo_title = local_content['seo_title']
         long_desc = local_content['description_html']
@@ -1225,32 +1329,67 @@ def scrape_product(url, session, config):
     tags = "Imported"
     handle = generate_handle(title)
     
-    # Variations
-    offers = product_data.get('offers')
-    variations_data = []
+    # ============================================================
+    # 🔥 FIXED: EXTRACT VARIATIONS (Size + Color)
+    # ============================================================
+    variations_data = extract_variations_from_jsonld(product_data, soup, base_url_domain, price)
     
-    if isinstance(offers, list) and len(offers) > 1:
-        for offer in offers:
-            if isinstance(offer, dict):
-                var_sku = offer.get('sku', f'VAR-{len(variations_data)+1}')
-                var_price = offer.get('price', price)
-                var_attrs = {}
-                if 'size' in offer:
-                    var_attrs['Size'] = offer['size']
-                if 'color' in offer:
-                    var_attrs['Color'] = offer['color']
-                if 'material' in offer:
-                    var_attrs['Material'] = offer['material']
-                if not var_attrs:
-                    var_attrs['Option'] = f'Variant {len(variations_data)+1}'
-                var_img = offer.get('image', '')
-                variations_data.append({
-                    'sku': var_sku,
-                    'price': var_price,
-                    'attrs': var_attrs,
-                    'image': var_img
-                })
+    # If no variations found, try HTML fallback
+    if not variations_data:
+        # Try to find size and color options from HTML
+        size_options = []
+        color_options = []
+        
+        # Look for size select/option
+        size_select = soup.find('select', {'class': re.compile(r'size|variant', re.I)})
+        if size_select:
+            for opt in size_select.find_all('option'):
+                val = opt.get('value', '').strip()
+                if val:
+                    size_options.append(val)
+        
+        # Look for color swatches or options
+        color_els = soup.find_all(['div', 'span', 'li'], {'class': re.compile(r'color|swatch', re.I)})
+        for el in color_els:
+            text = el.get_text(strip=True)
+            if text and len(text) < 20:
+                color_options.append(text)
+        
+        # Generate variations from HTML options
+        if size_options or color_options:
+            sizes = size_options if size_options else ['One Size']
+            colors = color_options if color_options else ['Default']
+            for size in sizes:
+                for color in colors:
+                    if color not in ['Default', ''] or size not in ['One Size']:
+                        var_attrs = {}
+                        if size and size not in ['One Size', '']:
+                            var_attrs['Size'] = size
+                        if color and color not in ['Default', '']:
+                            var_attrs['Color'] = color
+                        if not var_attrs:
+                            var_attrs['Option'] = 'Default'
+                        variations_data.append({
+                            'sku': f"VAR-{len(variations_data)+1}",
+                            'price': price,
+                            'attrs': var_attrs,
+                            'image': ''
+                        })
 
+    # Clean variations: remove duplicates
+    seen = set()
+    unique_variations = []
+    for var in variations_data:
+        key = tuple(sorted(var['attrs'].items()))
+        if key not in seen:
+            seen.add(key)
+            unique_variations.append(var)
+    variations_data = unique_variations
+
+    # Determine if product is variable
+    is_variable = len(variations_data) > 1
+
+    # Option names
     opt1_name = opt2_name = opt3_name = ''
     if variations_data:
         attr_names = set()
@@ -1272,8 +1411,8 @@ def scrape_product(url, session, config):
         'Tags': tags,
         'Published on online store': 'TRUE',
         'Status': 'active',
-        'SKU': '',
-        'Barcode': '',
+        'SKU': '' if is_variable else parent_sku,
+        'Barcode': '' if is_variable else random.randint(1000000000, 9999999999),
         'Option1 name': opt1_name,
         'Option1 value': '',
         'Option1 Linked To': 'Option1 name' if opt1_name else '',
@@ -1283,7 +1422,7 @@ def scrape_product(url, session, config):
         'Option3 name': opt3_name,
         'Option3 value': '',
         'Option3 Linked To': 'Option3 name' if opt3_name else '',
-        'Price': '',
+        'Price': '' if is_variable else price,
         'Compare-at price': '',
         'Cost per item': '',
         'Charge tax': 'TRUE',
@@ -1292,13 +1431,13 @@ def scrape_product(url, session, config):
         'Unit price total measure unit': '',
         'Unit price base measure': '',
         'Unit price base measure unit': '',
-        'Inventory tracker': '',
-        'Inventory quantity': '',
-        'Continue selling when out of stock': '',
-        'Weight value (grams)': '',
-        'Weight unit for display': '',
+        'Inventory tracker': '' if is_variable else 'shopify',
+        'Inventory quantity': '' if is_variable else 10,
+        'Continue selling when out of stock': '' if is_variable else 'DENY',
+        'Weight value (grams)': '' if is_variable else 150,
+        'Weight unit for display': '' if is_variable else 'g',
         'Requires shipping': 'TRUE',
-        'Fulfillment service': 'manual',
+        'Fulfillment service': 'manual' if not is_variable else '',
         'Product image URL': main_image,
         'Image position': '1',
         'Image alt text': title,
@@ -1332,17 +1471,21 @@ def scrape_product(url, session, config):
         img_row['Image position'] = str(idx)
         image_rows.append(img_row)
 
-    # Variant rows
+    # VARIANT ROWS
     variant_rows = []
-    if variations_data:
+    if variations_data and is_variable:
         for idx, var in enumerate(variations_data):
-            var_sku = f"{parent_sku}-{var.get('sku', random.randint(100,999))}"
+            var_sku = var.get('sku', f"VAR-{idx+1}")
+            if not var_sku:
+                var_sku = f"VAR-{idx+1}"
             var_price = var.get('price', price)
             var_attrs = var['attrs']
+            
             attr1_val = list(var_attrs.values())[0] if len(var_attrs) > 0 else ''
             attr2_val = list(var_attrs.values())[1] if len(var_attrs) > 1 else ''
             attr3_val = list(var_attrs.values())[2] if len(var_attrs) > 2 else ''
 
+            # Variant image
             var_img = var.get('image', '')
             var_img_url = ''
             if config.get('edit_images', False) and var_img:
@@ -1418,18 +1561,6 @@ def scrape_product(url, session, config):
                 'Google Shopping / Custom label 4': ''
             }
             variant_rows.append(variant_row)
-    
-    # If no variations, simple product
-    if not variations_data:
-        parent_row['SKU'] = parent_sku
-        parent_row['Price'] = price
-        parent_row['Inventory tracker'] = 'shopify'
-        parent_row['Inventory quantity'] = 10
-        parent_row['Continue selling when out of stock'] = 'DENY'
-        parent_row['Weight value (grams)'] = 150
-        parent_row['Weight unit for display'] = 'g'
-        parent_row['Fulfillment service'] = 'manual'
-        parent_row['Barcode'] = random.randint(1000000000, 9999999999)
 
     final_rows = [parent_row] + image_rows + variant_rows
     return final_rows, image_zip_data, None
@@ -1787,4 +1918,4 @@ if st.session_state.is_ready:
                         st.session_state[key] = None
             st.rerun()
 
-st.caption("🛒 V5.3 FINAL | Long Description Fixed | Smart Title Improved | Gemini 3.6 Flash | Batch Mode | 1000 MB ZIP Limit")
+st.caption("🛒 V5.4 FINAL | Variable Products Fixed (Size + Color) | Shopify/WooCommerce Ready | Gemini 3.6 Flash")
