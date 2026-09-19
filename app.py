@@ -33,7 +33,7 @@ USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/126.0',
 ]
 
-BATCH_SIZE = 30
+BATCH_SIZE = 20
 
 SHOPIFY_COLUMNS = [
     'Title', 'URL handle', 'Description', 'Vendor', 'Product category', 'Type', 'Tags',
@@ -74,44 +74,49 @@ WOOCOMMERCE_COLUMNS = [
 ]
 
 # ============================================================
-# 🔥 ALL FUNCTIONS (DEFINED FIRST)
+# ALL FUNCTIONS DEFINED FIRST
 # ============================================================
 
-# ---------- Gemini API Test ----------
 def test_gemini_api(api_key, model_name):
     """Test Gemini API and return (success, message)"""
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
-        payload = {"contents": [{"parts": [{"text": "Reply with just the word: OK"}]}]}
+        payload = {"contents": [{"parts": [{"text": "Reply with just: OK"}]}]}
         headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
         r = requests.post(url, json=payload, headers=headers, timeout=20)
         if r.status_code == 200:
-            data = r.json()
             try:
-                text = data['candidates'][0]['content']['parts'][0]['text']
+                text = r.json()['candidates'][0]['content']['parts'][0]['text']
                 return True, f"API working! Response: {text[:50]}"
             except (KeyError, IndexError):
-                return False, f"API 200 but format unexpected: {str(data)[:200]}"
+                return False, f"API 200 but unexpected format"
         elif r.status_code == 400:
             return False, f"400 Bad Request: {r.text[:200]}"
         elif r.status_code == 403:
             return False, f"403 Forbidden: {r.text[:200]}"
         elif r.status_code == 404:
-            return False, f"404 Not Found: Model '{model_name}' exists nahi karta. {r.text[:200]}"
+            return False, f"404 Model '{model_name}' not found. {r.text[:150]}"
         elif r.status_code == 429:
             return False, f"429 Rate Limit exceeded. Wait 1 min."
+        elif r.status_code == 503:
+            return False, f"503 Server busy. Wait 1-2 min and retry."
         else:
-            return False, f"HTTP {r.status_code}: {r.text[:300]}"
+            return False, f"HTTP {r.status_code}: {r.text[:200]}"
     except requests.exceptions.Timeout:
         return False, "Timeout (>20s)"
     except Exception as e:
         return False, f"Error: {str(e)[:200]}"
 
-# ---------- Keyword Extraction ----------
+
 def extract_keywords(title, category, specs_text):
-    combined = f"{title} {category} {specs_text[:500]}".lower()
+    """Extract primary/secondary/long-tail keywords"""
+    combined = f"{title} {category} {specs_text[:800]}".lower()
     words = re.findall(r'\b[a-z][a-z]+\b', combined)
-    stopwords = {'the','a','an','and','or','for','with','of','in','to','is','are','this','that','your','our','from','on','by','it','its','be','as','at','new','made','real','top','best','high','quality','premium','will','have','has','been','can','may','also','more','most','into','over','while','such','just','very','only','than','then','when','where','what','which','who'}
+    stopwords = {'the','a','an','and','or','for','with','of','in','to','is','are','this','that','your','our',
+                 'from','on','by','it','its','be','as','at','new','made','real','top','best','high','quality',
+                 'premium','will','have','has','been','can','may','also','more','most','into','over','while',
+                 'such','just','very','only','than','then','when','where','what','which','who','how','all',
+                 'but','not','out','up','down','you','they','them','their','was','were','one','two','use','used'}
     words = [w for w in words if w not in stopwords and len(w) > 3]
     freq = {}
     for w in words: freq[w] = freq.get(w, 0) + 1
@@ -126,20 +131,24 @@ def extract_keywords(title, category, specs_text):
         if ':' in line and len(line) < 80: spec_keywords.append(line)
     return {'primary': primary, 'secondary': secondary[:8], 'long_tail': spec_keywords[:5], 'all': list(set([primary] + secondary[:8]))}
 
-# ---------- Gemini Content Generator ----------
-def generate_ai_content(title, specs_text, category, store_context, keywords, api_key, model_name, custom_prompt):
-    if not api_key or not title: return None, "Missing API key or title"
+
+def generate_ai_content(title, specs_text, category, store_context, keywords, api_key, model_name, custom_prompt, max_retries=3):
+    """Generate SEO content via Gemini with retry + model fallback"""
+    if not api_key or not title:
+        return None, "Missing API key or title"
+    
     primary_kw = keywords.get('primary', '')
     secondary_kws = ', '.join(keywords.get('secondary', [])[:5])
     long_tail = '\n'.join([f"- {k}" for k in keywords.get('long_tail', [])[:5]])
     custom_block = f"\n\nBRAND VOICE INSTRUCTIONS:\n{custom_prompt}" if custom_prompt else ""
     context_block = f"\nStore Context: {store_context}" if store_context else ""
-    prompt = f"""You are an expert SEO copywriter and e-commerce content specialist. Write HIGH-QUALITY, KEYWORD-OPTIMIZED content for the following product.
+    
+    prompt = f"""You are a world-class editorial e-commerce copywriter for premium brands like Filson, Taylor Stitch, Schott NYC, and Saddleback Leather. You write in a compelling, story-driven, educational style that makes customers feel the craftsmanship and heritage behind each product.
 
-PRODUCT: {title}
+PRODUCT TITLE: {title}
 CATEGORY: {category}
-SPECIFICATIONS:
-{specs_text[:1500]}
+RAW SPECIFICATIONS & DETAILS:
+{specs_text[:2000]}
 {context_block}
 
 PRIMARY KEYWORD: {primary_kw}
@@ -148,98 +157,263 @@ LONG-TAIL PHRASES:
 {long_tail}
 {custom_block}
 
-REQUIREMENTS:
-1. PRIMARY KEYWORD must appear naturally in SEO Title, Short Description, Long Description (2-3 times), and Meta Description.
-2. SECONDARY KEYWORDS should be woven naturally — no keyword stuffing.
-3. Content must be UNIQUE, ENGAGING, PERSUASIVE, and SEO-OPTIMIZED.
-4. Follow exact character/word limits.
-5. Return ONLY the response in the EXACT format below. No extra text.
+═══════════════════════════════════════════════════════════
+WRITING STYLE REQUIREMENTS (Follow religiously):
+═══════════════════════════════════════════════════════════
+
+1. **STORIES, NOT SALES PITCHES**: Open with a cultural/historical/emotional hook — like describing a scene, a memory, or a tradition. NOT "This is a great product."
+
+2. **EDUCATE THE CUSTOMER**: Explain WHY premium materials matter using analogies. Example: "Leather is like a roof. You have the wood decking and then the shingles..." — Make complex specs feel intuitive.
+
+3. **SHOW DESIGN THINKING**: Use phrases like "We updated X with two factors in mind..." or "Here's why we chose Y..." — Position every feature as a deliberate decision.
+
+4. **USE SUBHEADINGS**: Long description must have 3-5 bold subheadings like:
+   - "Our Full Grain Leather is Key"
+   - "Sewn with Strength"
+   - "Built to Last Generations"
+   - "The Details That Matter"
+   - "Heritage You Can Wear"
+
+5. **WEAVE SPECIFIC NUMBERS**: Not "high quality" but "50% Wool, 50% Polyester" or "twice the thickness of most wallets."
+
+6. **CRAFTSMANSHIP REFERENCES**: Mention heritage, origin, artisan techniques, warranty, generational durability.
+
+7. **READER CONNECTION**: Speak TO the customer, like a knowledgeable friend — "Now let me tell you why..." / "Take a look at it."
+
+═══════════════════════════════════════════════════════════
+OUTPUT FORMAT (Strict — follow exactly):
+═══════════════════════════════════════════════════════════
 
 ===SEO TITLE===
-[Max 60 chars. Must include primary keyword. Make it click-worthy.]
+[Max 60 chars. Include PRIMARY KEYWORD. Story-driven or heritage-focused.]
 
 ===META DESCRIPTION===
-[Max 160 chars. Include primary keyword. Compelling call-to-action.]
+[155-160 chars. Include PRIMARY KEYWORD. Emotional hook + key benefit.]
 
 ===SHORT DESCRIPTION===
-[100-150 words. Hook + benefits + primary keyword. Persuasive.]
+[150-250 words. 2-3 paragraphs. Open with a story/hook, then highlight 2-3 key features. Include PRIMARY KEYWORD 1-2 times. Feel like the opening of an editorial magazine piece.]
 
 ===LONG DESCRIPTION===
-[400-600 words in HTML format. Use <h3> for subheadings, <p> for paragraphs, <ul><li> for features. Include: an engaging intro, 4-6 key benefits as bullet points, technical specifications, and a call-to-action. Weave keywords naturally.]
+[700-1000 words in HTML format. MUST include:
+- Opening paragraph: Story/cultural/emotional hook (2-3 sentences)
+- Then 3-5 sections, each with <h3>Subheading</h3> followed by 1-2 <p> paragraphs
+- Each section educates about a feature/material/craftsmanship aspect
+- Use <ul><li> for technical feature lists within sections
+- One closing paragraph with call-to-action
+- Weave PRIMARY KEYWORD naturally 3-4 times
+- Include analogies, specific numbers, heritage references]
 
 ===ADDITIONAL INFORMATION===
-[Extract 6-10 key specifications from the details above as bullet points. Format: <ul><li><strong>Spec Name:</strong> Spec Value</li></ul>]
+[Extract 8-12 specifications as clean bullet points. Format STRICTLY:
+<ul><li><strong>Material:</strong> Value</li><li><strong>Dimensions:</strong> Value</li>...</ul>
+Include: Material, Dimensions, Weight, Origin, Fit, Closure, Lining, Hardware, Warranty, SKU (if in specs)]
 
 ===TAGS===
-[5-8 relevant tags separated by commas, lowercase, for search/filtering]
+[8-10 lowercase tags, comma-separated. Include: product type, material, style, target audience, use case.]
 
-Now generate the content:"""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
-    headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
-    payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.75, "maxOutputTokens": 2500, "topP": 0.95, "topK": 40}}
-    try:
-        r = requests.post(url, json=payload, headers=headers, timeout=60)
-        if r.status_code != 200:
-            if r.status_code == 429: return None, "429 Rate Limit"
-            elif r.status_code == 400: return None, f"400: {r.text[:150]}"
-            elif r.status_code == 404: return None, f"404 Model '{model_name}' not found"
-            else: return None, f"HTTP {r.status_code}: {r.text[:150]}"
-        data = r.json()
-        try: text = data['candidates'][0]['content']['parts'][0]['text']
-        except (KeyError, IndexError): return None, "Response format unexpected"
-        return parse_ai_sections(text, title, primary_kw, keywords), None
-    except requests.exceptions.Timeout:
-        return None, "Timeout (>60s)"
-    except Exception as e:
-        return None, f"Error: {str(e)[:200]}"
+Now write the content:"""
+    
+    # Model fallback chain
+    model_chain = [model_name]
+    for fb in ["gemini-2.5-flash", "gemini-3.6-flash", "gemini-2.5-pro"]:
+        if fb not in model_chain:
+            model_chain.append(fb)
+    
+    last_error = ""
+    
+    for current_model in model_chain:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}:generateContent"
+        headers = {"Content-Type": "application/json", "x-goog-api-key": api_key}
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.8, "maxOutputTokens": 3000, "topP": 0.95, "topK": 40}
+        }
+        
+        for attempt in range(max_retries):
+            try:
+                r = requests.post(url, json=payload, headers=headers, timeout=90)
+                
+                if r.status_code == 200:
+                    try:
+                        text = r.json()['candidates'][0]['content']['parts'][0]['text']
+                        return parse_ai_sections(text, title, primary_kw, keywords), None
+                    except (KeyError, IndexError):
+                        last_error = "Response format unexpected"
+                        break
+                
+                elif r.status_code == 503:
+                    wait_time = 2 ** attempt
+                    last_error = f"503 (server busy) attempt {attempt+1}/{max_retries}"
+                    if attempt < max_retries - 1:
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        break
+                
+                elif r.status_code == 429:
+                    wait_time = 5 * (attempt + 1)
+                    last_error = f"429 (rate limit) attempt {attempt+1}/{max_retries}"
+                    if attempt < max_retries - 1:
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        break
+                
+                elif r.status_code == 403:
+                    return None, "403 Invalid API Key — check your key"
+                elif r.status_code == 400:
+                    last_error = f"400 Bad Request: {r.text[:100]}"
+                    break
+                elif r.status_code == 404:
+                    last_error = f"404 Model '{current_model}' not found"
+                    break
+                else:
+                    last_error = f"HTTP {r.status_code}: {r.text[:100]}"
+                    break
+            
+            except requests.exceptions.Timeout:
+                last_error = f"Timeout (attempt {attempt+1}/{max_retries})"
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                else:
+                    break
+            except Exception as e:
+                last_error = f"Error: {str(e)[:100]}"
+                break
+        
+        if current_model != model_chain[-1]:
+            time.sleep(1)
+    
+    return None, f"All models failed. Last: {last_error}"
+
 
 def parse_ai_sections(text, title, primary_kw, keywords):
-    result = {'seo_title': '', 'meta_description': '', 'short_description': '', 'long_description': '', 'additional_information': '', 'tags': ''}
-    markers = {'===SEO TITLE===': 'seo_title', '===META DESCRIPTION===': 'meta_description', '===SHORT DESCRIPTION===': 'short_description', '===LONG DESCRIPTION===': 'long_description', '===ADDITIONAL INFORMATION===': 'additional_information', '===TAGS===': 'tags'}
+    """Parse Gemini's structured response"""
+    result = {'seo_title': '', 'meta_description': '', 'short_description': '',
+              'long_description': '', 'additional_information': '', 'tags': ''}
+    markers = {
+        '===SEO TITLE===': 'seo_title',
+        '===META DESCRIPTION===': 'meta_description',
+        '===SHORT DESCRIPTION===': 'short_description',
+        '===LONG DESCRIPTION===': 'long_description',
+        '===ADDITIONAL INFORMATION===': 'additional_information',
+        '===TAGS===': 'tags'
+    }
     current_key = None; current_lines = []
     for line in text.split('\n'):
         s = line.strip()
         if s in markers:
-            if current_key and current_lines: result[current_key] = '\n'.join(current_lines).strip()
+            if current_key and current_lines:
+                result[current_key] = '\n'.join(current_lines).strip()
             current_key = markers[s]; current_lines = []
-        elif current_key: current_lines.append(line)
-    if current_key and current_lines: result[current_key] = '\n'.join(current_lines).strip()
+        elif current_key:
+            current_lines.append(line)
+    if current_key and current_lines:
+        result[current_key] = '\n'.join(current_lines).strip()
+    
     # Fallbacks
-    if not result['seo_title']: result['seo_title'] = f"{title} - {primary_kw.title()}"[:60]
-    if not result['meta_description']: result['meta_description'] = f"Shop the {title}. Premium quality, fast shipping. Order now!"[:160]
-    if not result['short_description']: result['short_description'] = f"Discover the {title} — premium quality, optimized for {primary_kw}."
-    if not result['long_description']: result['long_description'] = f"<p>Experience the {title}. Premium quality crafted for those who appreciate {primary_kw}.</p>"
-    if not result['additional_information']: result['additional_information'] = ""
-    if not result['tags']: result['tags'] = ', '.join(keywords.get('secondary', [])[:5])
+    if not result['seo_title']:
+        result['seo_title'] = f"{title} - {primary_kw.title()}"[:60]
+    if not result['meta_description']:
+        result['meta_description'] = f"Premium {title} crafted with quality materials. Order now!"[:160]
+    if not result['short_description']:
+        result['short_description'] = f"Discover the {title} — premium quality, crafted to last."
+    if not result['long_description']:
+        result['long_description'] = f"<p>Experience the {title}. Premium quality crafted for those who appreciate {primary_kw}.</p>"
+    if not result['tags']:
+        result['tags'] = ', '.join(keywords.get('secondary', [])[:5])
     result['tags'] = result['tags'].lower()
+    
     return result
 
-# ---------- Local Rewriter Fallback ----------
+
+# ---------- Local Editorial Fallback ----------
 class SmartRewriter:
     def __init__(self):
-        self.hooks = ["Meet the {title} — a piece that redefines what quality should feel like.", "Say hello to the {title}, where craftsmanship meets everyday style.", "Introducing the {title}, designed for those who value substance.", "The {title} is here — crafted to become your go-to favorite.", "Discover the {title}, where premium materials meet thoughtful design.", "Experience the {title} — built with care in every detail."]
-        self.features = ["Premium materials chosen for comfort and long-lasting wear", "Thoughtful construction that holds its shape use after use", "A comfortable, true-to-size fit made for all-day wear", "Versatile enough to dress up or down for any occasion", "Carefully finished details for a polished, put-together look", "Easy to care for so it stays looking great with minimal effort", "A timeless design that won't feel out of place next season", "Reinforced stitching and finishing where it matters most"]
-        self.ctas = ["Add it to your cart today — you won't regret it.", "Treat yourself to something built to last.", "Order now and see the quality for yourself.", "A smart upgrade for anyone who values quality."]
+        self.story_hooks = [
+            "If you look closely at the details, you'll understand why this piece stands apart from the rest.",
+            "There's a reason some pieces get passed down through generations — and it starts with how they're made.",
+            "Craftsmanship isn't just a word. It's a commitment to every stitch, every seam, every detail.",
+            "Some things get better with age. This is one of them.",
+            "When you hold a piece that's built to last, you can feel the difference immediately.",
+        ]
+        self.education_blocks = [
+            "Here's what most people don't realize: the quality of raw materials determines how a product ages. Cheap alternatives may look the same at first, but they never develop the character that quality materials do over time.",
+            "There's a reason premium materials cost more. The difference isn't just in how they look new — it's in how they look after years of use.",
+            "Every design decision here was made with intention. From the hardware to the lining, nothing was left to chance.",
+        ]
+        self.feature_subsections = [
+            ("Built to Last", "The construction methods used here are the same ones trusted by craftsmen for generations. Every stitch is reinforced, every seam is finished properly, and every detail is checked by hand."),
+            ("Materials That Matter", "We could have used cheaper alternatives. We didn't. The materials here were chosen for one reason: they get better with time, not worse."),
+            ("The Details Make the Difference", "It's the small things that separate a good product from a great one. The finishing, the hardware, the lining — every element is considered."),
+            ("Heritage & Craftsmanship", "This isn't mass-produced. Every piece carries with it a tradition of quality that's increasingly rare in the modern world."),
+            ("Designed for Real Life", "This piece was designed to be used, not just admired. It handles everyday wear with grace and looks better doing it."),
+        ]
+        self.closings = [
+            "A piece like this isn't a purchase — it's an investment. One you'll still be using years from now.",
+            "Some things are worth doing right. This is one of them.",
+            "When you choose quality, you choose a product that will serve you faithfully for years.",
+            "This is what happens when craftsmanship meets purpose. Welcome to better.",
+        ]
+
     def generate_content(self, title, raw_desc, category, store_context, specs_text, keywords):
-        hook = random.choice(self.hooks).format(title=title)
         primary_kw = keywords.get('primary', title.lower())
-        secondary = keywords.get('secondary', [])[:4]
-        seo_title = f"{title} - {primary_kw.title()}"
-        if len(seo_title) > 60: seo_title = seo_title[:57] + '...'
-        meta_desc = f"Shop the {title}. Premium {primary_kw} available. Fast shipping, quality guaranteed."
-        if len(meta_desc) > 160: meta_desc = meta_desc[:157] + '...'
-        short_desc = f"{hook} Premium quality crafted for {primary_kw}. Shop now."
-        features_html = ''.join([f"<li>{f}</li>" for f in random.sample(self.features, 4)])
-        long_desc = f"""<p>{hook}</p><p>This premium {primary_kw} is designed with your needs in mind. Whether you're looking for {secondary[0] if secondary else 'quality'} or simply want something that lasts, this product delivers.</p><h3>Key Features</h3><ul>{features_html}</ul><h3>Why Choose This Product</h3><p>Crafted from premium materials and built to last, this {primary_kw} offers exceptional value.</p><p>{random.choice(self.ctas)}</p>"""
+        secondary = keywords.get('secondary', [])[:5]
+        
+        # SEO Title
+        seo_title = f"{title} | {primary_kw.title()}"
+        if len(seo_title) > 60:
+            seo_title = seo_title[:57] + '...'
+        
+        # Meta Description
+        hook_line = random.choice(self.story_hooks)
+        meta_desc = f"{hook_line[:100]} Premium {primary_kw} built to last. Order now."
+        if len(meta_desc) > 160:
+            meta_desc = meta_desc[:157] + '...'
+        
+        # Short Description
+        story = random.choice(self.story_hooks)
+        short_desc = f"{story} This {primary_kw} is crafted from quality materials with attention to every detail. A piece designed for those who value substance over flash — and one that grows better with time."
+        
+        # Long Description
+        story_open = random.choice(self.story_hooks)
+        education = random.choice(self.education_blocks)
+        long_parts = [f"<p>{story_open} This {primary_kw} isn't just another product on a shelf — it's a considered piece built for the long haul.</p>"]
+        long_parts.append(f"<p>{education}</p>")
+        
+        for subhead, subtext in random.sample(self.feature_subsections, 3):
+            long_parts.append(f"<h3>{subhead}</h3>")
+            long_parts.append(f"<p>{subtext}</p>")
+        
+        long_parts.append(f"<p>{random.choice(self.closings)}</p>")
+        long_desc = ''.join(long_parts)
+        
+        # Additional Info
         additional_info = ""
         spec_lines = []
-        for line in (specs_text or "").split('\n')[:10]:
-            if ':' in line and len(line) < 100:
+        for line in (specs_text or "").split('\n')[:15]:
+            line = line.strip()
+            if ':' in line and len(line) < 120:
                 p = line.split(':', 1)
-                spec_lines.append(f"<li><strong>{p[0].strip()}:</strong> {p[1].strip()}</li>")
-        if spec_lines: additional_info = f"<ul>{''.join(spec_lines[:8])}</ul>"
-        tags = ', '.join(secondary[:6]) if secondary else primary_kw
-        return {'seo_title': seo_title, 'meta_description': meta_desc, 'short_description': short_desc, 'long_description': long_desc, 'additional_information': additional_info, 'tags': tags}
+                key = p[0].strip(); val = p[1].strip()
+                if 0 < len(key) < 40 and 0 < len(val) < 100:
+                    spec_lines.append(f"<li><strong>{key}:</strong> {val}</li>")
+        if spec_lines:
+            additional_info = f"<ul>{''.join(spec_lines[:10])}</ul>"
+        
+        # Tags
+        tags = ', '.join(secondary[:8]) if secondary else primary_kw
+        
+        return {
+            'seo_title': seo_title,
+            'meta_description': meta_desc,
+            'short_description': short_desc,
+            'long_description': long_desc,
+            'additional_information': additional_info,
+            'tags': tags
+        }
+
 
 # ---------- Extractors ----------
 def safe_get_offer_price(offers):
@@ -587,7 +761,7 @@ def scrape_product(url, session, config, ai_status_placeholder=None):
     headers = {'User-Agent': random.choice(USER_AGENTS)}
     for attempt in range(2):
         try:
-            resp = session.get(url, headers=headers, timeout=20); resp.raise_for_status(); break
+            resp = session.get(url, headers=headers, timeout=25); resp.raise_for_status(); break
         except:
             if attempt == 0: time.sleep(5)
             else: return None, None, f"Failed"
@@ -628,11 +802,21 @@ def scrape_product(url, session, config, ai_status_placeholder=None):
         if mat in raw_desc.lower(): material = mat.capitalize(); break
     if config.get('smart_title_enabled', True): title = generate_smart_title(original_title, specs_text, color, material)
     else: title = original_title
+    
     ai_content = None; ai_error = None
     if config.get('ai_enabled', False) and config.get('gemini_api_key'):
-        ai_content, ai_error = generate_ai_content(title, specs_text, category_str, config.get('store_context', ''), keywords, config.get('gemini_api_key'), config.get('gemini_model', 'gemini-3.5-flash-lite'), config.get('ai_custom_prompt', ''))
-        if ai_error and ai_status_placeholder:
+        ai_content, ai_error = generate_ai_content(
+            title, specs_text, category_str, config.get('store_context', ''),
+            keywords, config.get('gemini_api_key'),
+            config.get('gemini_model', 'gemini-2.5-flash'),
+            config.get('ai_custom_prompt', '')
+        )
+        if ai_content:
+            time.sleep(1.5)  # Inter-request delay
+        elif ai_error and ai_status_placeholder:
             ai_status_placeholder.warning(f"⚠️ AI failed for '{title[:30]}...': {ai_error} — Using local fallback.")
+            time.sleep(0.5)
+    
     rewriter = SmartRewriter()
     content = ai_content if ai_content else rewriter.generate_content(title, raw_desc, category_str, config.get('store_context', ''), specs_text, keywords)
     seo_title = content.get('seo_title', title)
@@ -826,11 +1010,11 @@ def process_batch(urls, config, session, ai_status):
     return all_rows, image_data, failed
 
 # ============================================================
-# 🎨 NOW THE UI (AFTER ALL FUNCTIONS ARE DEFINED)
+# NOW THE UI
 # ============================================================
-st.set_page_config(page_title="Universal Extractor V6.1", page_icon="🛒")
-st.title("🛒 UNIVERSAL EXTRACTOR V6.1 (AI WORKING)")
-st.markdown("**Gemini AI | Keyword-Mapped SEO | Variable Products | Additional Info**")
+st.set_page_config(page_title="Universal Extractor V6.2", page_icon="🛒")
+st.title("🛒 UNIVERSAL EXTRACTOR V6.2 (EDITORIAL QUALITY)")
+st.markdown("**Gemini AI | Editorial Style | Keyword-Mapped SEO | Variable Products**")
 
 st.components.v1.html("""<script>setInterval(function(){console.log("🛡️");},2000);</script>""", height=0)
 
@@ -843,18 +1027,19 @@ with st.expander("⚙️ Configure Gemini AI", expanded=True):
         with c1:
             st.text_input("🔑 Gemini API Key", type="password", key="gemini_api_key")
         with c2:
-            st.selectbox("Model", ["gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.5-pro"], key="gemini_model")
+            st.selectbox("Model", ["gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-3.6-flash", "gemini-2.5-pro"], key="gemini_model")
         if st.button("🧪 Test Gemini API"):
             k = st.session_state.get("gemini_api_key", "").strip()
             if not k: st.error("❌ API key daalo pehle.")
             else:
                 with st.spinner("Testing..."):
-                    ok, msg = test_gemini_api(k, st.session_state.get("gemini_model", "gemini-3.5-flash-lite"))
+                    ok, msg = test_gemini_api(k, st.session_state.get("gemini_model", "gemini-2.5-flash"))
                     if ok: st.success(f"✅ {msg}")
                     else: st.error(f"❌ {msg}")
         st.text_area("✍️ Custom Brand Voice / Prompt (optional)", key="ai_custom_prompt",
-                     placeholder="e.g. Write in luxurious, aspirational tone. Focus on craftsmanship.", height=100)
-        st.caption("⚠️ Free tier: 15 req/min. Auto-fallback if AI fails.")
+                     placeholder="e.g. Write in luxurious, aspirational tone. Focus on craftsmanship and heritage.",
+                     height=100)
+        st.caption("⚠️ Free tier: 15 req/min. Tool retries 503/429 automatically + falls back to next model.")
     else:
         if 'gemini_api_key' in st.session_state: st.session_state.gemini_api_key = ""
 
@@ -892,7 +1077,9 @@ st.subheader("📝 Content Settings")
 with st.expander("⚙️ Configure Content", expanded=False):
     cc1, cc2 = st.columns(2)
     with cc1:
-        st.text_area("🏪 Store / Niche Context", key="ai_store_context", placeholder="e.g. Premium leather jackets", height=80)
+        st.text_area("🏪 Store / Niche Context", key="ai_store_context",
+                     placeholder="e.g. Premium leather jackets, heritage fashion",
+                     height=80)
         st.checkbox("✨ Auto-Generate Unique Product Title", key="smart_title_enabled", value=True)
     with cc2:
         st.slider("🖼️ Max Gallery Images", 3, 20, 10, key="max_gallery_images")
@@ -900,12 +1087,13 @@ with st.expander("⚙️ Configure Content", expanded=False):
 # ---------- Inputs ----------
 st.subheader("📥 Input & Controls")
 edit_images = st.checkbox("🖌️ Enable Image Editing", value=True)
-export_format = st.radio("📦 Export Format", ["🛍️ Shopify CSV", "🛒 WooCommerce CSV"], key="export_format", horizontal=True)
+export_format = st.radio("📦 Export Format", ["🛍️ Shopify CSV", "🛒 WooCommerce CSV"],
+                         key="export_format", horizontal=True)
 ci1, ci2 = st.columns([3, 1])
 with ci1: urls_input = st.text_area("🔗 Product URLs (one per line):", height=150)
 with ci2: base_url = st.text_input("🌐 Base URL:", placeholder="https://domain.com/wp-content/uploads/")
 
-# ---------- Config Getter (defined here as it uses st.session_state) ----------
+# ---------- Config Getter ----------
 def get_branding_config():
     clb = None
     if st.session_state.get("enable_logo", False):
@@ -940,7 +1128,7 @@ def get_branding_config():
         'smart_title_enabled': st.session_state.get("smart_title_enabled", True),
         'ai_enabled': st.session_state.get("ai_enabled", False),
         'gemini_api_key': st.session_state.get("gemini_api_key", "").strip(),
-        'gemini_model': st.session_state.get("gemini_model", "gemini-3.5-flash-lite"),
+        'gemini_model': st.session_state.get("gemini_model", "gemini-2.5-flash"),
         'ai_custom_prompt': st.session_state.get("ai_custom_prompt", "").strip(),
     }
 
@@ -959,8 +1147,11 @@ if st.button("🚀 Generate CSV + ZIP (Batch Mode)", type="primary") or st.sessi
             st.session_state.is_processing = True
             st.rerun()
     if st.session_state.is_processing:
-        ul = st.session_state.all_urls; bi = st.session_state.batch_index; tt = st.session_state.total_urls
-        s = bi * BATCH_SIZE; e = min(s + BATCH_SIZE, tt)
+        ul = st.session_state.all_urls
+        bi = st.session_state.batch_index
+        tt = st.session_state.total_urls
+        s = bi * BATCH_SIZE
+        e = min(s + BATCH_SIZE, tt)
         cb = ul[s:e]
         if s < tt:
             st_text = st.empty(); pb = st.progress(0); ai_status = st.empty()
@@ -1009,7 +1200,8 @@ if st.button("🚀 Generate CSV + ZIP (Batch Mode)", type="primary") or st.sessi
                 st.session_state.has_zip = False
                 st.session_state.zip_data = None
                 st.rerun()
-        else: st.session_state.is_processing = False
+        else:
+            st.session_state.is_processing = False
 
 # ---------- Download Section ----------
 if st.session_state.is_ready:
@@ -1064,4 +1256,4 @@ if st.session_state.is_ready:
                     else: st.session_state[k] = None
             st.rerun()
 
-st.caption("🛒 V6.1 | AI Working | Keyword-Mapped SEO | Additional Information | Variable Products")
+st.caption("🛒 V6.2 | Editorial Quality | AI Retry + Fallback | Variable Products | Additional Info")
